@@ -5,12 +5,12 @@ import numpy as np
 _model = None
 
 
-def _get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
+print("Loading sentence transformer model...")
+_model = SentenceTransformer("all-MiniLM-L6-v2")
+print("Model loaded successfully")
 
+def _get_model():
+    return _model
 
 def top_n_similar(query: str, candidates: list[str], n: int = 2) -> tuple[list[int], list[float]]:
     """
