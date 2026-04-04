@@ -5,7 +5,19 @@ import requests
 import similarity
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
+@app.route("/<path:path>", methods=["OPTIONS"])
+def options_handler(path=""):
+    return jsonify({}), 200
 
 # ── Supabase config ──────────────────────────────────────────
 SB_URL = os.environ.get("SUPABASE_URL", "https://icfgkrinhmiebmwwqarj.supabase.co")
