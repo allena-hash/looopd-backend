@@ -1,204 +1,198 @@
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+import math
+import re
+from collections import Counter
 
-_model = None
+# ── Lightweight TF-IDF cosine similarity ─────────────────────
+# No ML model needed — pure Python, zero memory overhead
 
+STOP = set(['i','a','the','is','it','in','of','and','to','was','my','me',
+'you','that','this','we','do','not','so','but','just','for','on','at','be',
+'have','with','they','he','she','are','were','an','im','its','dont','cant',
+'get','go','very','much','also','even','still','really','like','know','feel',
+'think','about','what','when','how','why','who','there','here','your','our',
+'its','been','has','had','will','would','could','should','may','might','shall'])
 
-print("Loading sentence transformer model...")
-_model = SentenceTransformer("all-MiniLM-L6-v2")
-print("Model loaded successfully")
+def tokenize(text):
+    words = re.findall(r"[a-z']+", text.lower())
+    return [w for w in words if w not in STOP and len(w) > 2]
 
-def _get_model():
-    return _model
+def tfidf_vector(tokens, all_docs_tokens):
+    tf = Counter(tokens)
+    total = len(tokens) if tokens else 1
+    vec = {}
+    N = len(all_docs_tokens)
+    for word, count in tf.items():
+        df = sum(1 for doc in all_docs_tokens if word in doc)
+        idf = math.log((N + 1) / (df + 1)) + 1
+        vec[word] = (count / total) * idf
+    return vec
 
-def top_n_similar(query: str, candidates: list[str], n: int = 2) -> tuple[list[int], list[float]]:
-    """
-    Returns indices and scores of the top N most similar candidates to the query.
-    Filters out empty candidates.
-    """
+def cosine(v1, v2):
+    keys = set(v1) & set(v2)
+    if not keys:
+        return 0.0
+    dot = sum(v1[k] * v2[k] for k in keys)
+    mag1 = math.sqrt(sum(x*x for x in v1.values()))
+    mag2 = math.sqrt(sum(x*x for x in v2.values()))
+    if mag1 == 0 or mag2 == 0:
+        return 0.0
+    return dot / (mag1 * mag2)
+
+def top_n_similar(query, candidates, n=2):
     if not candidates:
         return [], []
-
-    # Filter empty strings
     valid = [(i, c) for i, c in enumerate(candidates) if c and c.strip()]
     if not valid:
         return [], []
-
     indices, texts = zip(*valid)
-    model = _get_model()
-    embeddings = model.encode([query] + list(texts))
-    query_vec = embeddings[0:1]
-    candidate_vecs = embeddings[1:]
-    scores = cosine_similarity(query_vec, candidate_vecs)[0]
-
-    # Get top N
+    all_tokens = [set(tokenize(t)) for t in texts]
+    query_tokens = tokenize(query)
+    all_docs = [query_tokens] + [tokenize(t) for t in texts]
+    query_vec = tfidf_vector(query_tokens, [set(d) for d in all_docs])
+    scores = []
+    for text in texts:
+        t = tokenize(text)
+        vec = tfidf_vector(t, [set(d) for d in all_docs])
+        scores.append(cosine(query_vec, vec))
     n = min(n, len(scores))
-    top_n = np.argsort(scores)[::-1][:n]
-    top_indices = [indices[i] for i in top_n]
-    top_scores = [float(scores[i]) for i in top_n]
+    import heapq
+    top = heapq.nlargest(n, range(len(scores)), key=lambda i: scores[i])
+    return [indices[i] for i in top], [scores[i] for i in top]
 
-    return top_indices, top_scores
-
-
-def most_similar(query: str, candidates: list[str]) -> tuple[int, float]:
-    """
-    Original function — returns single best match index and score.
-    """
+def most_similar(query, candidates):
     indices, scores = top_n_similar(query, candidates, n=1)
     if not indices:
         return 0, 0.0
     return indices[0], scores[0]
 
 
-# ── Emotion detection using sentence embeddings ──────────────────────
-# We embed the input text and compare it to prototype sentences
-# for each emotion. The closest emotion prototype wins.
-# This is far more accurate than keyword matching.
-
-EMOTION_PROTOTYPES = {
-    "happy": [
-        "I feel so happy and joyful today",
-        "Everything is going great, I am having such a good time",
-        "I am really enjoying this, it makes me smile",
-        "I feel grateful and blessed, life is good",
-        "I am so excited and thrilled about this",
-    ],
-    "sad": [
-        "I feel so sad and down today",
-        "I have been crying and I feel really low",
-        "Everything feels hopeless and I am hurting inside",
-        "I feel heartbroken and devastated",
-        "Nothing is going right and I feel terrible",
-    ],
-    "lonely": [
-        "I feel so alone and nobody understands me",
-        "I have no one to talk to and I feel invisible",
-        "I feel completely isolated and disconnected from everyone",
-        "Nobody cares about me and I feel forgotten",
-        "I feel like a stranger even around people I know",
-    ],
-    "anxious": [
-        "I feel so anxious and worried about everything",
-        "My mind is racing and I cannot stop overthinking",
-        "I feel scared and nervous, something bad might happen",
-        "I am panicking and feel so stressed out",
-        "I cannot sleep because I keep worrying about things",
-    ],
-    "overwhelmed": [
-        "I feel completely overwhelmed, there is too much going on",
-        "I cannot cope with everything at once, I am drowning",
-        "I am exhausted and burned out from all the pressure",
-        "Everything is piling up and I am at my breaking point",
-        "I have so much to do and I do not know where to start",
-    ],
-    "angry": [
-        "I am so angry and furious about this",
-        "I feel betrayed and outraged, this is so unfair",
-        "I hate this situation and I am really mad",
-        "I am fed up and cannot take this anymore",
-        "I feel so much rage and resentment",
-    ],
-    "frustrated": [
-        "I feel so frustrated, nothing is working out",
-        "I keep trying but nothing ever changes",
-        "This is so annoying and pointless",
-        "I am stuck and cannot figure out what to do",
-        "Everything I try fails and it is driving me crazy",
-    ],
-    "nostalgic": [
-        "I really miss those days, I wish I could go back",
-        "I keep thinking about the past and how things used to be",
-        "Those were such good times, I miss them so much",
-        "I remember when everything felt simpler and better",
-        "Thinking about old memories makes me feel warm and sad at the same time",
-    ],
-    "hopeful": [
-        "I feel hopeful that things will get better",
-        "I believe things are slowly improving",
-        "I am not giving up, I think there is a brighter future ahead",
-        "Maybe things will work out, I am trying to stay positive",
-        "I feel like I am slowly moving forward",
-    ],
-    "calm": [
-        "I feel calm and at peace right now",
-        "Everything feels settled and I am relaxed",
-        "I feel grounded and centered today",
-        "I have let go of my worries and feel peaceful",
-        "I feel okay, things are quiet and still",
-    ],
-    "numb": [
-        "I feel completely numb and empty inside",
-        "I do not feel anything at all, just going through the motions",
-        "Everything feels flat and meaningless",
-        "I am detached from everything, like a zombie",
-        "I have stopped caring about things, nothing reaches me",
-    ],
-    "confused": [
-        "I feel confused and do not know what is happening",
-        "Nothing makes sense to me right now",
-        "I am lost and cannot figure out what I think or feel",
-        "Everything feels mixed up and unclear",
-        "I do not understand what is going on with me",
-    ],
+# ── Emotion detection using weighted phrases ─────────────────
+EMOTIONS = {
+    'happy': {
+        'detail': 'genuinely-happy',
+        'phrases': [
+            ('so happy',3),('really happy',3),('feeling great',3),('so good',3),
+            ('having fun',3),('so much fun',3),('love it',3),('amazing',2),
+            ('wonderful',2),('fantastic',2),('great',2),('awesome',2),('joy',2),
+            ('enjoying',2),('smile',2),('laughing',2),('grateful',2),('blessed',2),
+            ('proud',2),('excited',2),('thrilled',2),('good',1),('nice',1),('glad',1),
+        ]
+    },
+    'sad': {
+        'detail': 'deeply-sad',
+        'phrases': [
+            ('so sad',3),('really sad',3),('feel terrible',3),('been crying',3),
+            ('heartbroken',3),('devastated',3),('feel awful',3),('feeling low',3),
+            ('sad',2),('cry',2),('crying',2),('tears',2),('depressed',2),('hurt',2),
+            ('pain',2),('broken',2),('hopeless',2),('helpless',2),('miserable',2),
+            ('unhappy',2),('grief',2),('lost',2),('miss',2),('down',1),('low',1),
+        ]
+    },
+    'lonely': {
+        'detail': 'quietly-lonely',
+        'phrases': [
+            ('feel so alone',3),('no one cares',3),('nobody understands',3),
+            ('feel invisible',3),('no one to talk',3),('completely alone',3),
+            ('alone',2),('lonely',2),('nobody',2),('no one',2),('isolated',2),
+            ('left out',2),('excluded',2),('forgotten',2),('ignored',2),
+            ('abandoned',2),('disconnected',2),('no friends',2),('by myself',2),
+        ]
+    },
+    'anxious': {
+        'detail': 'quietly-anxious',
+        'phrases': [
+            ('so anxious',3),('really worried',3),('cannot stop worrying',3),
+            ('heart racing',3),('panic attack',3),('mind racing',3),
+            ('anxious',2),('anxiety',2),('worried',2),('worry',2),('scared',2),
+            ('nervous',2),('panic',2),('overthinking',2),('afraid',2),('fear',2),
+            ('stressed',2),('stress',2),('dread',2),('tense',2),('uneasy',2),
+        ]
+    },
+    'overwhelmed': {
+        'detail': 'completely-overwhelmed',
+        'phrases': [
+            ('too much to handle',3),('cannot cope',3),('completely overwhelmed',3),
+            ('breaking point',3),('drowning in',3),('at my limit',3),
+            ('overwhelmed',2),('too much',2),('exhausted',2),('drained',2),
+            ('burnout',2),('burnt out',2),('no energy',2),('swamped',2),
+            ('buried',2),('losing control',2),('out of control',2),
+        ]
+    },
+    'angry': {
+        'detail': 'deeply-angry',
+        'phrases': [
+            ('so angry',3),('really angry',3),('furious',3),('absolutely livid',3),
+            ('angry',2),('anger',2),('mad',2),('rage',2),('hate',2),
+            ('outraged',2),('fed up',2),('betrayed',2),('unfair',2),('livid',2),
+        ]
+    },
+    'frustrated': {
+        'detail': 'quietly-frustrated',
+        'phrases': [
+            ('so frustrated',3),('nothing is working',3),('tried everything',3),
+            ('frustrated',2),('annoyed',2),('irritated',2),('stuck',2),
+            ('nothing works',2),('pointless',2),('useless',2),('going nowhere',2),
+        ]
+    },
+    'nostalgic': {
+        'detail': 'warmly-nostalgic',
+        'phrases': [
+            ('wish i could go back',3),('those were the days',3),('really miss those',3),
+            ('remember when',2),('used to',2),('back then',2),('those days',2),
+            ('childhood',2),('years ago',2),('miss the old',2),('simpler times',2),
+        ]
+    },
+    'hopeful': {
+        'detail': 'cautiously-hopeful',
+        'phrases': [
+            ('things will get better',3),('slowly getting there',3),('not giving up',3),
+            ('hope',2),('hopeful',2),('believe',2),('getting better',2),
+            ('improving',2),('moving forward',2),('keep going',2),('one day',1),
+        ]
+    },
+    'calm': {
+        'detail': 'peacefully-calm',
+        'phrases': [
+            ('feeling really calm',3),('at peace',3),('totally relaxed',3),
+            ('calm',2),('peaceful',2),('relaxed',2),('settled',2),('grounded',2),
+            ('okay now',2),('feeling better now',2),('letting go',2),('still',1),
+        ]
+    },
+    'numb': {
+        'detail': 'quietly-numb',
+        'phrases': [
+            ('feel completely numb',3),('feel nothing',3),('going through motions',3),
+            ('just existing',3),('disconnected from everything',3),
+            ('numb',2),('empty inside',2),('hollow',2),('detached',2),
+            ('dont care anymore',2),('stopped caring',2),('like a zombie',2),
+        ]
+    },
+    'confused': {
+        'detail': 'genuinely-confused',
+        'phrases': [
+            ('makes no sense',3),('do not understand',3),('completely lost',3),
+            ('confused',2),('mixed up',2),('cannot figure',2),('unclear',2),
+            ('uncertain',2),('not sure what',2),('lost track',2),
+        ]
+    },
 }
 
-# Detail labels for each emotion
-EMOTION_DETAILS = {
-    "happy":       "genuinely-happy",
-    "sad":         "deeply-sad",
-    "lonely":      "quietly-lonely",
-    "anxious":     "quietly-anxious",
-    "overwhelmed": "completely-overwhelmed",
-    "angry":       "deeply-angry",
-    "frustrated":  "quietly-frustrated",
-    "nostalgic":   "warmly-nostalgic",
-    "hopeful":     "cautiously-hopeful",
-    "calm":        "peacefully-calm",
-    "numb":        "quietly-numb",
-    "confused":    "genuinely-confused",
-}
-
-_emotion_embeddings = None
-
-
-def _get_emotion_embeddings():
-    """Pre-compute and cache embeddings for all emotion prototypes."""
-    global _emotion_embeddings
-    if _emotion_embeddings is None:
-        model = _get_model()
-        _emotion_embeddings = {}
-        for emotion, sentences in EMOTION_PROTOTYPES.items():
-            vecs = model.encode(sentences)
-            # Average the prototype embeddings for each emotion
-            _emotion_embeddings[emotion] = np.mean(vecs, axis=0)
-    return _emotion_embeddings
-
-
-def detect_emotion(text: str) -> tuple[str, str, dict]:
-    """
-    Detects emotion from text using sentence embeddings.
-    Returns (emotion, detail, scores_dict)
-    """
+def detect_emotion(text):
     if not text or len(text.strip()) < 3:
-        return "neutral", "quietly-present", {}
-
-    model = _get_model()
-    text_vec = model.encode([text])
-    emotion_vecs = _get_emotion_embeddings()
-
+        return 'neutral', 'quietly-present', {}
+    tl = text.lower()
     scores = {}
-    for emotion, proto_vec in emotion_vecs.items():
-        score = float(cosine_similarity(text_vec, [proto_vec])[0][0])
-        scores[emotion] = round(score, 4)
-
-    # Find best emotion
-    best_emotion = max(scores, key=scores.get)
-    best_score = scores[best_emotion]
-
-    # If score is too low, return neutral
-    if best_score < 0.25:
-        return "neutral", "quietly-present", scores
-
-    detail = EMOTION_DETAILS.get(best_emotion, "quietly-present")
-    return best_emotion, detail, scores
+    for emo, data in EMOTIONS.items():
+        score = 0
+        for phrase, weight in data['phrases']:
+            if phrase in tl:
+                score += weight
+        if score > 0:
+            scores[emo] = score
+    if not scores:
+        return 'neutral', 'quietly-present', {}
+    best = max(scores, key=scores.get)
+    if scores[best] < 2:
+        return 'neutral', 'quietly-present', scores
+    detail = EMOTIONS[best]['detail']
+    return best, detail, scores
