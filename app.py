@@ -26,12 +26,19 @@ SB_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ey
 SB_HEADERS = {
     "apikey": SB_KEY,
     "Authorization": f"Bearer {SB_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
 }
 
 def sb_get(path):
-    r = requests.get(f"{SB_URL}/rest/v1/{path}", headers=SB_HEADERS)
-    r.raise_for_status()
+    r = requests.get(
+        f"{SB_URL}/rest/v1/{path}",
+        headers=SB_HEADERS,
+        timeout=10
+    )
+    if not r.ok:
+        print(f"Supabase error {r.status_code}: {r.text}")
+        r.raise_for_status()
     return r.json()
 
 
