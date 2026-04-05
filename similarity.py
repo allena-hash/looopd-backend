@@ -76,6 +76,7 @@ EMOTIONS = {
             ('wonderful',2),('fantastic',2),('great',2),('awesome',2),('joy',2),
             ('enjoying',2),('smile',2),('laughing',2),('grateful',2),('blessed',2),
             ('proud',2),('excited',2),('thrilled',2),('good',1),('nice',1),('glad',1),
+            ('i am happy',3),('feeling happy',3),('i feel happy',3),('very happy',3),('so good',2),('nice day',2),('good day',2),
         ]
     },
     'sad': {
@@ -192,7 +193,7 @@ def detect_emotion(text):
     if not scores:
         return 'neutral', 'quietly-present', {}
     best = max(scores, key=scores.get)
-    if scores[best] < 2:
+    if scores[best] < 1:
         return 'neutral', 'quietly-present', scores
     detail = EMOTIONS[best]['detail']
     return best, detail, scores
